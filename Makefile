@@ -1,9 +1,9 @@
 CFLAGS=-Wall -g
 
-all:	proof
+all:	pre-proc
 
-proof: debug.h proof.c
+pre-proc: debug.h pre-proc.c
 
 clean:
-	rm -f proof
+	rm -f pre-proc
 
