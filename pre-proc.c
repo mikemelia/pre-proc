@@ -5,8 +5,8 @@
 #include <sys/stat.h>
 #include <math.h>
 
-struct Counts {
-	char base;
+struct Genome {
+	int *sequence;
 	int count;
 };
 
@@ -16,11 +16,6 @@ int get_line(char **line, size_t *size, FILE *file) {
 		bytesRead = get_line(line, size, file);
 	}
 	return bytesRead;	
-}
-
-void process_character(char *position, struct Counts *counts) {
-	counts->base = *position;
-	counts->count = 0;
 }
 
 char toBits(char *input) {
@@ -53,47 +48,92 @@ char fromBits(int value) {
 
 void toString(char *buffer, int *value) {
 	int i = 0;
-	for (i = 15; i > 0; i--) {
-		int inter = *value >> (i);
+	for (i = 13; i >= 0; i--) {
+		int inter = *value >> (i * 2);
 		inter &= 0x0003;	
-		*(buffer + 15 - i) = fromBits(inter);
+		*(buffer + 13 - i) = fromBits(inter);
 	}
 }
 
-void addToBuffer(int *sequence, char latest, long offset) {
+void addToBuffer(int *sequence, char latest, long offset, int *sequenceMap, int *entries, struct Genome *genomeCounts) {
 	*sequence = *sequence <<= 2;
 	unsigned char *char_version = (unsigned char *)sequence;
 	char_version[0] |= latest;
-	*sequence &= 0x7FFF;
+	*sequence &= 0x0FFFFFFF;
+	if (offset >= 14) {
+		if (sequenceMap[*sequence] != 0) {
+			entries[offset + 1] = sequenceMap[*sequence];
+		} else {
+			entries[offset + 1] = -1;
+		}
+		sequenceMap[*sequence] = offset + 1;
+	}
+	// log_info("Sequence %X for %ld offset \n", *sequence, offset);
+
 }
 
-int parse_line(char *line, int *counts, long offset, int *sequence) {
+int parse_line(char *line, int *sequenceMap, long offset, int *sequence, int *entries, struct Genome *genomeCounts) {
 	int length = strlen(line) - 1;
 	int i = 0;
 	for (i = 0; i < length; i++) {
-		addToBuffer(sequence, toBits(&line[i]), offset);
-		counts[*sequence] += 1;
+		addToBuffer(sequence, toBits(&line[i]), offset + i, sequenceMap, entries, genomeCounts);
 	}
 	return i;
 }
 
-struct Counts *createCounts(char *fileName) {
+long getLength(char *fileName) {
 	struct stat fileinfo;
 	stat(fileName, &fileinfo);
 	long length = (long)fileinfo.st_size;
 	log_info("Filesize is : %ld\n", length);
-	struct Counts *counts = malloc(length * sizeof(struct Counts));
-	return counts;
+	return length;
 }
 
+int *createEntries(char *fileName) {
+	long length = getLength(fileName);
+	int *entries = malloc(length * sizeof(int));
+	return entries;
+}
+
+struct Genome *createGenomeCounts(char *fileName) {
+	long length = getLength(fileName);
+	struct Genome *genomeCounts = malloc(length * sizeof(struct Genome));
+	return genomeCounts;
+}
+
+int count(int start, int *entries) {
+	int count = 1;
+	int current = start;
+	while (entries[current] != -1) {
+		current = entries[current];
+		count++;
+	}
+	return count;
+}
+
+void write_counts(int *sequenceMap, int *entries) {
+	int i = 0;
+	char *buffer = malloc(sizeof(char) * 16);
+	for (i = 0; i < pow(4, 14); i++) {
+		if (sequenceMap[i] != 0) {
+			toString(buffer, &i);
+			printf("%d: %X, %s has %d entries\n", i, i, buffer, count(sequenceMap[i], entries));
+		}
+	}
+
+}
 int read_file(char *fileName) {
 	FILE *file = fopen(fileName, "r");
 	if (file == NULL) {
 		check(file != NULL, "Could not open file %s", fileName);
 	}
 	log_info("starting\n");
-	int *counts = malloc(sizeof(int) * pow(4, 14));
-	check(counts != NULL, "could not get enough memory for counts");
+	int *entries = createEntries(fileName);
+	check(entries != NULL, "could not get enough memory for entries");
+	struct Genome *genomeCounts = createGenomeCounts(fileName);
+	check(genomeCounts != NULL, "could not get enough memory for genomeCounts");
+	int *sequenceMap = malloc(sizeof(int) * pow(4, 14));
+	check(sequenceMap != NULL, "could not get enough memory for sequenceMap");
 
 	long numEntries = 0;
 	size_t bufferSize = 1000;
@@ -101,21 +141,13 @@ int read_file(char *fileName) {
 	log_info("int is %d\n", (int) sizeof(int));
 	int *sequence = malloc(sizeof(int));
 	while(get_line(&line, &bufferSize, file) > 0) {
-		numEntries += parse_line(line, counts, numEntries, sequence);
+		numEntries += parse_line(line, sequenceMap, numEntries, sequence, entries, genomeCounts);
 	}
 	
 	log_info("processed: %ld\n", numEntries);
 	
 	fclose(file);
-	int i = 0;
-	for (i = 0; i < pow(4, 14); i++) {
-		if (counts[i] > 0) {
-			char *buffer = malloc(sizeof(char) * 16);
-//			log_info("%X has %d entries\n", i, counts[i]);
-			toString(buffer, &i);
-			log_info("%s has %d entries\n", buffer, counts[i]);
-		}
-	}
+	write_counts(sequenceMap, entries);
 	return 0;
 
 	error:
